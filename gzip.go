@@ -1,8 +1,11 @@
 package gziphandler
 
 import (
+	"bufio"
 	"compress/gzip"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -55,12 +58,19 @@ func (w GzipResponseWriter) CloseNotify() <-chan bool {
 	return w.ResponseWriter.(http.CloseNotifier).CloseNotify()
 }
 
+func (w GzipResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("not a hijacker")
+	}
+	return hj.Hijack()
+}
+
 // GzipHandler wraps an HTTP handler, to transparently gzip the response body if
 // the client supports it (via the Accept-Encoding header).
 func GzipHandler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add(vary, acceptEncoding)
-
 		if acceptsGzip(r) {
 			// Bytes written during ServeHTTP are redirected to this gzip writer
 			// before being written to the underlying response.
@@ -68,7 +78,6 @@ func GzipHandler(h http.Handler) http.Handler {
 			defer gzipWriterPool.Put(gzw)
 			gzw.Reset(w)
 			defer gzw.Close()
-
 			w.Header().Set(contentEncoding, "gzip")
 			h.ServeHTTP(GzipResponseWriter{gzw, w}, r)
 		} else {
@@ -80,6 +89,9 @@ func GzipHandler(h http.Handler) http.Handler {
 // acceptsGzip returns true if the given HTTP request indicates that it will
 // accept a gzippped response.
 func acceptsGzip(r *http.Request) bool {
+	if r.Header.Get("Upgrade") == "websocket" {
+		return false
+	}
 	acceptedEncodings, _ := parseEncodings(r.Header.Get(acceptEncoding))
 	return acceptedEncodings["gzip"] > 0.0
 }
