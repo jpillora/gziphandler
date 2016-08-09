@@ -70,26 +70,29 @@ func (w GzipResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // the client supports it (via the Accept-Encoding header).
 func GzipHandler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add(vary, acceptEncoding)
-		if acceptsGzip(r) {
-			// Bytes written during ServeHTTP are redirected to this gzip writer
-			// before being written to the underlying response.
-			gzw := gzipWriterPool.Get().(*gzip.Writer)
-			defer gzipWriterPool.Put(gzw)
-			gzw.Reset(w)
-			defer gzw.Close()
-			w.Header().Set(contentEncoding, "gzip")
-			h.ServeHTTP(GzipResponseWriter{gzw, w}, r)
-		} else {
+		//ignore?
+		if !acceptsGzip(r) {
 			h.ServeHTTP(w, r)
+			return
 		}
+		w.Header().Add(vary, acceptEncoding)
+		// Bytes written during ServeHTTP are redirected to this gzip writer
+		// before being written to the underlying response.
+		gzw := gzipWriterPool.Get().(*gzip.Writer)
+		defer gzipWriterPool.Put(gzw)
+		gzw.Reset(w)
+		defer gzw.Close()
+		w.Header().Set(contentEncoding, "gzip")
+		h.ServeHTTP(GzipResponseWriter{gzw, w}, r)
 	})
 }
 
 // acceptsGzip returns true if the given HTTP request indicates that it will
 // accept a gzippped response.
 func acceptsGzip(r *http.Request) bool {
-	if r.Header.Get("Upgrade") == "websocket" {
+	//these are basically saying: will this request get hijacked?
+	if r.Header.Get("Upgrade") == "websocket" ||
+		r.Header.Get("Accept") == "text/event-stream" {
 		return false
 	}
 	acceptedEncodings, _ := parseEncodings(r.Header.Get(acceptEncoding))
